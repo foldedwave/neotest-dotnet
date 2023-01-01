@@ -6,6 +6,7 @@ local trx_utils = require("neotest-dotnet.trx-utils")
 local dap_utils = require("neotest-dotnet.dap-utils")
 local framework_utils = require("neotest-dotnet.frameworks.test-framework-utils")
 local attribute_utils = require("neotest-dotnet.frameworks.test-attribute-utils")
+local scan = require("plenary.scandir")
 
 local DotnetNeotestAdapter = { name = "neotest-dotnet" }
 local dap_args
@@ -101,6 +102,57 @@ DotnetNeotestAdapter.discover_positions = function(path)
   return tree
 end
 
+local function build_single_spec(args, test_root, position, fqn, proj)
+  local results_path = async.fn.tempname() .. ".trx"
+  local filter = ""
+  if position.type == "namespace" then
+    filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
+  end
+  if position.type == "test" then
+    -- Allow a more lenient 'contains' match for the filter, accepting tradeoff that it may
+    -- also run tests with similar names. This allows us to run parameterized tests individually
+    -- or as a group.
+    filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
+  end
+
+  local command = {
+    "dotnet",
+    "test",
+    proj,
+    filter,
+    "--results-directory",
+    vim.fn.fnamemodify(results_path, ":h"),
+    "--logger",
+    '"trx;logfilename=' .. vim.fn.fnamemodify(results_path, ":t:h") .. '"',
+  }
+
+  local command_string = table.concat(command, " ")
+  local spec = {
+    command = command_string,
+    context = {
+      results_path = results_path,
+      file = test_root,
+      id = test_root,
+    },
+  }
+
+  if args.strategy == "dap" then
+    local send_debug_start, await_debug_start = async.control.channel.oneshot()
+    logger.debug("neotest-dotnet: Running tests in debug mode")
+
+    dap_utils.start_debuggable_test(command_string, function(dotnet_test_pid)
+      spec.strategy = dap_utils.get_dap_adapter_config(dotnet_test_pid, dap_args)
+      spec.command = nil
+      logger.debug("neotest-dotnet: Sending debug start")
+      send_debug_start()
+    end)
+
+    await_debug_start()
+  end
+
+  return spec
+end
+
 DotnetNeotestAdapter.build_spec = function(args)
   local position = args.tree:data()
   local results_path = async.fn.tempname() .. ".trx"
@@ -122,53 +174,15 @@ DotnetNeotestAdapter.build_spec = function(args)
   -- than the full path to the file.
   local test_root = project_dir
 
-  local filter = ""
-  if position.type == "namespace" then
-    filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
-  end
-  if position.type == "test" then
-    -- Allow a more lenient 'contains' match for the filter, accepting tradeoff that it may
-    -- also run tests with similar names. This allows us to run parameterized tests individually
-    -- or as a group.
-    filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
+  local projects = scan.scan_dir(test_root, {search_pattern = "**.csproj$"})
+ 
+  local retval = {}
+  for _, proj in ipairs(projects) do
+    local proj_root = DotnetNeotestAdapter.root(proj)
+    table.insert(retval, build_single_spec(args, proj_root, position, fqn, proj))
   end
 
-  local command = {
-    "dotnet",
-    "test",
-    test_root,
-    filter,
-    "--results-directory",
-    vim.fn.fnamemodify(results_path, ":h"),
-    "--logger",
-    '"trx;logfilename=' .. vim.fn.fnamemodify(results_path, ":t:h") .. '"',
-  }
-
-  local command_string = table.concat(command, " ")
-  local spec = {
-    command = command_string,
-    context = {
-      results_path = results_path,
-      file = position.path,
-      id = position.id,
-    },
-  }
-
-  if args.strategy == "dap" then
-    local send_debug_start, await_debug_start = async.control.channel.oneshot()
-    logger.debug("neotest-dotnet: Running tests in debug mode")
-
-    dap_utils.start_debuggable_test(command_string, function(dotnet_test_pid)
-      spec.strategy = dap_utils.get_dap_adapter_config(dotnet_test_pid, dap_args)
-      spec.command = nil
-      logger.debug("neotest-dotnet: Sending debug start")
-      send_debug_start()
-    end)
-
-    await_debug_start()
-  end
-
-  return spec
+  return retval
 end
 
 ---@async
@@ -178,21 +192,32 @@ end
 ---@return neotest.Result[]
 DotnetNeotestAdapter.results = function(spec, _, tree)
   local output_file = spec.context.results_path
-
   local parsed_data = trx_utils.parse_trx(output_file)
   local test_results = parsed_data.TestRun and parsed_data.TestRun.Results
+  local test_definitions = parsed_data.TestRun and parsed_data.TestRun.TestDefinitions
 
   -- No test results. Something went wrong. Check for runtime error
   if not test_results then
     return result_utils.get_runtime_error(spec.context.id)
   end
 
+  local test_nodes = get_test_nodes_data(tree)
+
+  for _, node in ipairs(test_nodes) do
+    local full_name = string.gsub(node:data().id, node:data().path.."::", "")
+    full_name = string.gsub(full_name, "::", ".");
+    node:data().full_name = full_name
+  end
+
   if #test_results.UnitTestResult > 1 then
     test_results = test_results.UnitTestResult
   end
+  if #test_definitions.UnitTest > 1 then
+    test_definitions = test_definitions.UnitTest
+  end
 
   local test_nodes = get_test_nodes_data(tree)
-  local intermediate_results = result_utils.create_intermediate_results(test_results)
+  local intermediate_results = result_utils.create_intermediate_results(test_results, test_definitions)
 
   local neotest_results =
     result_utils.convert_intermediate_results(intermediate_results, test_nodes)
