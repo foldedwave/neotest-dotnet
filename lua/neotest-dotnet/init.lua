@@ -23,7 +23,7 @@ local function get_test_nodes_data(tree)
   return test_nodes
 end
 
-DotnetNeotestAdapter.root = lib.files.match_root_pattern("*.csproj", "*.fsproj")
+DotnetNeotestAdapter.root = lib.files.match_root_pattern("**/*.csproj", "**/*.fsproj")
 
 DotnetNeotestAdapter.is_test_file = function(file_path)
   if vim.endswith(file_path, ".cs") or vim.endswith(file_path, ".fs") then
