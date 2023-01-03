@@ -83,12 +83,18 @@ DotnetNeotestAdapter.discover_positions = function(path)
     ;; --Namespaces
     ;; Matches namespace
     (namespace_declaration
+      [
+        name: (identifier) @namespace.name
         name: (qualified_name) @namespace.name
+      ]
     ) @namespace.definition
 
     ;; Matches file-scoped namespaces
     (file_scoped_namespace_declaration
+      [
+        name: (identifier) @namespace.name
         name: (qualified_name) @namespace.name
+      ]
     ) @namespace.definition
   ]] .. framework_queries
 
@@ -105,6 +111,9 @@ end
 local function build_single_spec(args, test_root, position, fqn, proj)
   local results_path = async.fn.tempname() .. ".trx"
   local filter = ""
+  if position.type == "class" then
+    filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
+  end
   if position.type == "namespace" then
     filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
   end
@@ -174,10 +183,12 @@ DotnetNeotestAdapter.build_spec = function(args)
   -- than the full path to the file.
   local test_root = project_dir
 
-  local projects = scan.scan_dir(test_root, {search_pattern = "**.csproj$"})
- 
   local retval = {}
-  for _, proj in ipairs(projects) do
+  for _, proj in ipairs(scan.scan_dir(test_root, {search_pattern = "**.csproj$"})) do
+    local proj_root = DotnetNeotestAdapter.root(proj)
+    table.insert(retval, build_single_spec(args, proj_root, position, fqn, proj))
+  end
+  for _, proj in ipairs(scan.scan_dir(test_root, {search_pattern = "**.fsproj$"})) do
     local proj_root = DotnetNeotestAdapter.root(proj)
     table.insert(retval, build_single_spec(args, proj_root, position, fqn, proj))
   end

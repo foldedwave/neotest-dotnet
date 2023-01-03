@@ -2,7 +2,6 @@ local xunit_utils = require("neotest-dotnet.frameworks.xunit-utils")
 local nunit_utils = require("neotest-dotnet.frameworks.nunit-utils")
 local mstest_utils = require("neotest-dotnet.frameworks.mstest-utils")
 local attribute_utils = require("neotest-dotnet.frameworks.test-attribute-utils")
-local logger = require("neotest.logging")
 local async = require("neotest.async")
 
 local M = {}
@@ -68,22 +67,33 @@ function M.get_match_type(captured_nodes)
   if captured_nodes["namespace.name"] then
     return "namespace"
   end
+  if captured_nodes["class.name"] then
+    return "class"
+  end
   if captured_nodes["test.parameterized.name"] then
     return "test.parameterized"
   end
 end
 
 M.position_id = function(position, parents)
-  local original_id = table.concat(
-    vim.tbl_flatten({
-      position.path,
-      vim.tbl_map(function(pos)
-        return pos.name
-      end, parents),
-      position.name,
-    }),
-    "::"
-  )
+  local original_id = position.path
+  local prev_node
+  for _, node in ipairs(parents) do
+    local sep = "::"
+    if(prev_node ~= nil and prev_node.type == "class"
+        and node.type == "class") then
+      sep = "+"
+    end
+    original_id = original_id .. sep .. node.name
+    prev_node = node
+  end
+
+  local sep = "::"
+  if(prev_node ~= nil and prev_node.type == "class"
+      and position.type == "class") then
+    sep = "+"
+  end
+  original_id = original_id .. sep .. position.name
 
   -- Check to see if the position is a test case and contains parentheses (meaning it is parameterized)
   -- If it is, remove the duplicated parent test name from the ID, so that when reading the trx test name
