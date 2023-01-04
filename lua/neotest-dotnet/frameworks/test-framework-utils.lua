@@ -80,8 +80,8 @@ M.position_id = function(position, parents)
   local prev_node
   for _, node in ipairs(parents) do
     local sep = "::"
-    if(prev_node ~= nil and prev_node.type == "class"
-        and node.type == "class") then
+    if(prev_node ~= nil and prev_node.is_class
+        and node.is_class) then
       sep = "+"
     end
     original_id = original_id .. sep .. node.name
@@ -89,8 +89,8 @@ M.position_id = function(position, parents)
   end
 
   local sep = "::"
-  if(prev_node ~= nil and prev_node.type == "class"
-      and position.type == "class") then
+  if(prev_node ~= nil and prev_node.is_class
+      and position.is_class) then
     sep = "+"
   end
   original_id = original_id .. sep .. position.name
@@ -124,8 +124,14 @@ M.build_position = function(file_path, source, captured_nodes)
 
   local name = vim.treesitter.get_node_text(captured_nodes[match_type .. ".name"], source)
   local definition = captured_nodes[match_type .. ".definition"]
+
+  local is_class = match_type == "class"
+  if match_type == "class" then
+    match_type = "namespace"
+  end
   local node = {
     type = match_type,
+    is_class = is_class,
     path = file_path,
     name = name,
     range = { definition:range() },
