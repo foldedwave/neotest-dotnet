@@ -82,12 +82,18 @@ DotnetNeotestAdapter.discover_positions = function(path)
     ;; --Namespaces
     ;; Matches namespace
     (namespace_declaration
+      [
+        name: (identifier) @namespace.name
         name: (qualified_name) @namespace.name
+      ]
     ) @namespace.definition
 
     ;; Matches file-scoped namespaces
     (file_scoped_namespace_declaration
+      [
+        name: (identifier) @namespace.name
         name: (qualified_name) @namespace.name
+      ]
     ) @namespace.definition
   ]] .. framework_queries
 
@@ -100,6 +106,7 @@ DotnetNeotestAdapter.discover_positions = function(path)
 
   return tree
 end
+
 
 DotnetNeotestAdapter.build_spec = function(args)
   local position = args.tree:data()
@@ -123,6 +130,9 @@ DotnetNeotestAdapter.build_spec = function(args)
   local test_root = project_dir
 
   local filter = ""
+  if position.type == "class" then
+    filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
+  end
   if position.type == "namespace" then
     filter = '--filter FullyQualifiedName~"' .. fqn .. '"'
   end
@@ -181,18 +191,30 @@ DotnetNeotestAdapter.results = function(spec, _, tree)
 
   local parsed_data = trx_utils.parse_trx(output_file)
   local test_results = parsed_data.TestRun and parsed_data.TestRun.Results
+  local test_definitions = parsed_data.TestRun and parsed_data.TestRun.TestDefinitions
 
   -- No test results. Something went wrong. Check for runtime error
   if not test_results then
     return result_utils.get_runtime_error(spec.context.id)
   end
 
+  local test_nodes = get_test_nodes_data(tree)
+
+  for _, node in ipairs(test_nodes) do
+    local full_name = string.gsub(node:data().id, node:data().path.."::", "")
+    full_name = string.gsub(full_name, "::", ".");
+    node:data().full_name = full_name
+  end
+
   if #test_results.UnitTestResult > 1 then
     test_results = test_results.UnitTestResult
   end
+  if #test_definitions.UnitTest > 1 then
+    test_definitions = test_definitions.UnitTest
+  end
 
   local test_nodes = get_test_nodes_data(tree)
-  local intermediate_results = result_utils.create_intermediate_results(test_results)
+  local intermediate_results = result_utils.create_intermediate_results(test_results, test_definitions)
 
   local neotest_results =
     result_utils.convert_intermediate_results(intermediate_results, test_nodes)
